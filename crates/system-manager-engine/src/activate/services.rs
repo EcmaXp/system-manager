@@ -354,7 +354,11 @@ pub fn restart_userborn_if_exists() -> anyhow::Result<()> {
     // Check if userborn.service exists by listing units matching the pattern
     let units = service_manager.list_units_by_patterns(&[], &["userborn.service"])?;
 
-    if units.is_empty() {
+    // A disabled userborn that is still referenced is listed as "not-found".
+    if units
+        .iter()
+        .all(|unit| matches!(unit.load_state.as_str(), "not-found" | "masked"))
+    {
         log::debug!("userborn.service not found, skipping");
         return Ok(());
     }
