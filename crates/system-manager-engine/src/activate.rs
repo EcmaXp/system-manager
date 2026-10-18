@@ -166,7 +166,13 @@ pub fn activate(store_path: &StorePath, ephemeral: bool) -> Result<()> {
             }
 
             log::info!("Activating tmp files...");
-            let tmp_result = tmp_files::activate(&etc_tree.files);
+            let tmp_result = tmp_files::activate(
+                &etc_tree
+                    .files
+                    .union(&etc_tree.backed_up_files)
+                    .cloned()
+                    .collect(),
+            );
             if let Err(e) = &tmp_result {
                 log::error!("Error during activation of tmp files");
                 log::error!("{e}");
