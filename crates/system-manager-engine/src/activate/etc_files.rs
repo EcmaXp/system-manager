@@ -133,9 +133,17 @@ pub fn activate(
     // Delete unecessary files
     let files_to_delete: HashSet<PathBuf> = old_state
         .files
-        .difference(&new_state.files)
+        .union(&old_state.backed_up_files)
+        .filter(|f| !new_state.contains(f))
         .map(|f| f.to_owned())
         .collect();
+    // Marked as backed up so delete_paths restores them.
+    new_state.backed_up_files.extend(
+        old_state
+            .backed_up_files
+            .intersection(&files_to_delete)
+            .cloned(),
+    );
     new_state = delete_paths(&files_to_delete, new_state);
     Ok((new_state, failed))
 }
