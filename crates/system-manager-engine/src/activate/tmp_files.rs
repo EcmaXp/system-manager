@@ -9,11 +9,12 @@ type TmpFilesActivationResult = ActivationResult<()>;
 
 pub fn activate(etc_tree: &HashSet<PathBuf>) -> TmpFilesActivationResult {
     let tmp_files_prefix = PathBuf::from("/etc/tmpfiles.d");
-    // List and collect managed files under /etc/tmpFiles.d
+    let run_tmp_files_prefix = PathBuf::from("/run/tmpfiles.d");
+    // List and collect managed files under /etc/tmpFiles.d and /run/tmpfiles.d
     let tmpfiles_conf_files: Vec<&str> = etc_tree
         .iter()
         .filter_map(|p| {
-            if p.starts_with(&tmp_files_prefix) {
+            if p.starts_with(&tmp_files_prefix) || p.starts_with(&run_tmp_files_prefix) {
                 p.to_str()
             } else {
                 None

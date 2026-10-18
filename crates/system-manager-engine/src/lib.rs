@@ -4,7 +4,7 @@ pub mod register;
 mod systemd;
 pub mod unit_info;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::os::unix;
@@ -154,4 +154,31 @@ pub fn etc_dir(ephemeral: bool) -> PathBuf {
     } else {
         PathBuf::from("/etc")
     }
+}
+
+// Never replaced: systemctl needs /run/systemd/system to be a directory.
+const EPHEMERAL_RUNTIME_DIRS: [&str; 2] = ["systemd/system", "tmpfiles.d"];
+
+pub fn etc_target(etc_dir: &Path, rel: &Path) -> PathBuf {
+    if etc_dir == self::etc_dir(true)
+        && EPHEMERAL_RUNTIME_DIRS
+            .iter()
+            .any(|dir| rel.starts_with(dir))
+    {
+        Path::new("/run").join(rel)
+    } else {
+        etc_dir.join(rel)
+    }
+}
+
+pub fn ensure_ephemeral_runtime_dirs() -> Result<()> {
+    for dir in EPHEMERAL_RUNTIME_DIRS {
+        let dir = Path::new("/run").join(dir);
+        if dir.is_symlink() {
+            remove_link(&dir).with_context(|| format!("Error while removing {}", dir.display()))?;
+        }
+        fs::create_dir_all(&dir)
+            .with_context(|| format!("Error while creating {}", dir.display()))?;
+    }
+    Ok(())
 }

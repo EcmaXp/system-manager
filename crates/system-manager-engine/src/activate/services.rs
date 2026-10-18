@@ -1,14 +1,14 @@
 use anyhow::Context;
 use im::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
-use std::path::{self, Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 use std::{fs, io};
 
 use super::ActivationResult;
 use crate::activate::ActivationError;
 use crate::unit_info::{parse_systemd_bool, parse_unit};
-use crate::{create_link, etc_dir, systemd, StorePath};
+use crate::{ensure_ephemeral_runtime_dirs, systemd, StorePath};
 
 type ServiceActivationResult = ActivationResult<Services>;
 
@@ -63,9 +63,6 @@ pub fn activate(
     old_services: Services,
     ephemeral: bool,
 ) -> ServiceActivationResult {
-    verify_systemd_dir(ephemeral)
-        .map_err(|e| ActivationError::with_partial_result(old_services.clone(), e))?;
-
     let services = get_active_services(store_path, old_services.clone())?;
 
     let (masked, active): (Services, Services) = services
@@ -172,66 +169,15 @@ fn get_services_to_stop(services_to_stop: Services) -> Services {
     services_to_stop
 }
 
-fn systemd_system_dir(ephemeral: bool) -> PathBuf {
-    if ephemeral {
-        Path::new(path::MAIN_SEPARATOR_STR)
-            .join("run")
-            .join("systemd")
-            .join("system")
-    } else {
-        Path::new(path::MAIN_SEPARATOR_STR)
-            .join("etc")
-            .join("systemd")
-            .join("system")
-    }
-}
-
-fn verify_systemd_dir(ephemeral: bool) -> anyhow::Result<()> {
-    if ephemeral {
-        let system_dir = systemd_system_dir(ephemeral);
-        if system_dir.exists()
-            && !system_dir.is_symlink()
-            && system_dir.is_dir()
-            && system_dir.read_dir()?.next().is_some()
-        {
-            anyhow::bail!(
-                "The directory {} exists and is not empty, we cannot symlink it.",
-                system_dir.display()
-            );
-        } else if system_dir.exists() {
-            if !system_dir.is_symlink() && system_dir.is_dir() {
-                fs::remove_dir(&system_dir).with_context(|| {
-                    format!(
-                        "Error while removing the empty dir at {}",
-                        system_dir.display()
-                    )
-                })?;
-            } else {
-                fs::remove_file(&system_dir).with_context(|| {
-                    format!(
-                        "Error while removing the symlink at {}",
-                        system_dir.display()
-                    )
-                })?;
-            }
-        }
-
-        let target = etc_dir(ephemeral).join("systemd").join("system");
-        create_link(&target, &system_dir).with_context(|| {
-            format!(
-                "Error while creating symlink: {} -> {}",
-                system_dir.display(),
-                target.display(),
-            )
-        })?;
-    }
-    Ok(())
-}
-
 pub fn deactivate(old_services: Services) -> ServiceActivationResult {
     log::debug!("{:?}", old_services);
 
-    restore_ephemeral_system_dir()
+    // If we turned the ephemeral systemd system dir under /run into a symlink,
+    // then systemd crashes when that symlink goes broken.
+    // To avoid this, we always check whether this directory exists and is correct,
+    // and we recreate it if needed.
+    // NOTE: We rely on the fact that the etc files get cleaned up first, before this runs!
+    ensure_ephemeral_runtime_dirs()
         .map_err(|e| ActivationError::with_partial_result(old_services.clone(), e))?;
 
     // masked units can't be running, skip them
@@ -292,22 +238,6 @@ pub fn deactivate(old_services: Services) -> ServiceActivationResult {
 
     log::info!("Done");
     Ok(im::HashMap::new())
-}
-
-// If we turned the ephemeral systemd system dir under /run into a symlink,
-// then systemd crashes when that symlink goes broken.
-// To avoid this, we always check whether this directory exists and is correct,
-// and we recreate it if needed.
-// NOTE: We rely on the fact that the etc files get cleaned up first, before this runs!
-fn restore_ephemeral_system_dir() -> anyhow::Result<()> {
-    let ephemeral_systemd_system_dir = systemd_system_dir(true);
-    if !ephemeral_systemd_system_dir.exists() {
-        if ephemeral_systemd_system_dir.is_symlink() {
-            fs::remove_file(&ephemeral_systemd_system_dir)?;
-        }
-        fs::create_dir_all(&ephemeral_systemd_system_dir)?;
-    }
-    Ok(())
 }
 
 fn stop_services<'a, U>(service_manager: &systemd::ServiceManager, units: U) -> HashSet<JobId>

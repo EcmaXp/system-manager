@@ -13,7 +13,9 @@ use std::{fs, io};
 
 use super::ActivationResult;
 use crate::activate::{ActivationError, EtcFilesState};
-use crate::{etc_dir, remove_file, remove_link, StorePath};
+use crate::{
+    ensure_ephemeral_runtime_dirs, etc_dir, etc_target, remove_file, remove_link, StorePath,
+};
 
 type EtcActivationResult = ActivationResult<EtcFilesState>;
 /// The state we managed to build, plus every target we failed to write.
@@ -104,6 +106,10 @@ pub fn activate(
 
     let etc_dir = etc_dir(ephemeral);
     log::info!("Creating /etc entries in {}", etc_dir.display());
+    if ephemeral {
+        ensure_ephemeral_runtime_dirs()
+            .map_err(|e| ActivationError::with_partial_result(old_state.clone(), e))?;
+    }
 
     // Walk through static link, list entries
     let mut entries = match list_static_entries(&config) {
@@ -312,7 +318,7 @@ fn list_static_entries(config_entries: &EtcFilesConfig) -> anyhow::Result<Vec<Et
                     source: StorePath {
                         store_path: canon_path,
                     },
-                    target: PathBuf::from("/etc").join(target),
+                    target,
                     uid: 0,
                     gid: 0,
                     group: "".to_string(),
@@ -343,7 +349,7 @@ fn create_etc_files(
     let mut failed = Vec::new();
     files.sort_by(|a, b| a.target.cmp(&b.target));
     for file in files {
-        let target = PathBuf::from(etc_dir).join(&file.target);
+        let target = etc_target(etc_dir, &file.target);
         state = match create_etc_file(file, state, old_state, etc_dir) {
             Ok(state) => state,
             Err(ActivationError::WithPartialResult { result, source }) => {
@@ -367,7 +373,7 @@ fn create_etc_file(
     old_state: &EtcFilesState,
     etc_dir: &Path,
 ) -> EtcActivationResult {
-    let target = PathBuf::from(etc_dir).join(&file.target);
+    let target = etc_target(etc_dir, &file.target);
     log::debug!(
         "Creating {} to {} ({})",
         file.source,
